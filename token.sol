@@ -73,3 +73,10 @@ contract GoldCoin {
         throw;     // Prevents accidental sending of ether
     }
 }
+    /* This makes tokens for the uncapped sale */
+function mintToken(address target, uint256 mintedAmount) onlyOwner {
+    balanceOf[target] += mintedAmount;
+    totalSupply += mintedAmount;
+    Transfer(0, owner, mintedAmount);
+    Transfer(owner, target, mintedAmount);
+}
