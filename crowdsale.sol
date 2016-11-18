@@ -1,5 +1,5 @@
 pragma solidity ^0.4.2;
-contract token { function transfer(address receiver, uint amount){  } }
+contract token { function mintToken(address receiver, uint amount){  } }
 
 contract Crowdsale {
     address public beneficiary;
@@ -34,7 +34,7 @@ contract Crowdsale {
         uint amount = msg.value;
         balanceOf[msg.sender] = amount;
         amountRaised += amount;
-        tokenReward.transfer(msg.sender, amount / price);
+        tokenReward.mintToken(msg.sender, amount / price);
         FundTransfer(msg.sender, amount, true);
     }
 
