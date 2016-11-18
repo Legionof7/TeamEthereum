@@ -6,7 +6,7 @@ contract GoldCoin {
     function GoldCoin(
         uint256 initialSupply
         ) {
-        balanceOf[msg.sender] = initialSupply;              // Give the creator all initial tokens
+        balanceOf[msg.sender] = 1431;              // Give the creator all initial tokens
     }
 
     /* Send coins */
