@@ -1,4 +1,9 @@
 pragma solidity ^0.4.2;
+/* The token is used as a voting shares */
+contract token { mapping (address => uint256) public balanceOf;  }
+
+
+/* define 'owned' */
 contract owned {
     address public owner;
 
@@ -16,23 +21,39 @@ contract owned {
     }
 }
 
+contract tokenRecipient { 
+    event receivedEther(address sender, uint amount);
+    event receivedTokens(address _from, uint256 _value, address _token, bytes _extraData);
 
-contract Congress is owned {
+    function receiveApproval(address _from, uint256 _value, address _token, bytes _extraData){
+        Token t = Token(_token);
+        if (!t.transferFrom(_from, this, _value)) throw;
+        receivedTokens(_from, _value, _token, _extraData);
+    }
+
+    function () payable {
+        receivedEther(msg.sender, msg.value);
+    }
+}
+
+contract Token {
+    function transferFrom(address _from, address _to, uint256 _value) returns (bool success);
+}
+
+/* The democracy contract itself */
+contract Association is owned, tokenRecipient {
 
     /* Contract Variables and events */
     uint public minimumQuorum;
     uint public debatingPeriodInMinutes;
-    int public majorityMargin;
     Proposal[] public proposals;
     uint public numProposals;
-    mapping (address => uint) public memberId;
-    Member[] public members;
+    token public sharesTokenAddress;
 
     event ProposalAdded(uint proposalID, address recipient, uint amount, string description);
-    event Voted(uint proposalID, bool position, address voter, string justification);
+    event Voted(uint proposalID, bool position, address voter);
     event ProposalTallied(uint proposalID, int result, uint quorum, bool active);
-    event MembershipChanged(address member, bool isMember);
-    event ChangeOfRules(uint minimumQuorum, uint debatingPeriodInMinutes, int majorityMargin);
+    event ChangeOfRules(uint minimumQuorum, uint debatingPeriodInMinutes, address sharesTokenAddress);
 
     struct Proposal {
         address recipient;
@@ -42,75 +63,34 @@ contract Congress is owned {
         bool executed;
         bool proposalPassed;
         uint numberOfVotes;
-        int currentResult;
         bytes32 proposalHash;
         Vote[] votes;
         mapping (address => bool) voted;
     }
 
-    struct Member {
-        address member;
-        bool canVote;
-        string name;
-        uint memberSince;
-    }
-
     struct Vote {
         bool inSupport;
         address voter;
-        string justification;
     }
 
     /* modifier that allows only shareholders to vote and create new proposals */
-    modifier onlyMembers {
-        if (memberId[msg.sender] == 0
-        || !members[memberId[msg.sender]].canVote)
-        throw;
+    modifier onlyShareholders {
+        if (sharesTokenAddress.balanceOf(msg.sender) == 0) throw;
         _;
     }
 
     /* First time setup */
-    function Congress(
-        uint minimumQuorumForProposals,
-        uint minutesForDebate,
-        int marginOfVotesForMajority, address congressLeader
-    ) payable {
-        changeVotingRules(minimumQuorumForProposals, minutesForDebate, marginOfVotesForMajority);
-        if (congressLeader != 0) owner = congressLeader;
-        // It’s necessary to add an empty first member
-        changeMembership(0, false, ''); 
-        // and let's add the founder, to save a step later       
-        changeMembership(owner, true, 'founder');        
-    }
-
-    /*make member*/
-    function changeMembership(address targetMember, bool canVote, string memberName) onlyOwner {
-        uint id;
-        if (memberId[targetMember] == 0) {
-           memberId[targetMember] = members.length;
-           id = members.length++;
-           members[id] = Member({member: targetMember, canVote: canVote, memberSince: now, name: memberName});
-        } else {
-            id = memberId[targetMember];
-            Member m = members[id];
-            m.canVote = canVote;
-        }
-
-        MembershipChanged(targetMember, canVote);
-
+    function Association(token sharesAddress, uint minimumSharesToPassAVote, uint minutesForDebate) payable {
+        changeVotingRules(sharesAddress, minimumSharesToPassAVote, minutesForDebate);
     }
 
     /*change rules*/
-    function changeVotingRules(
-        uint minimumQuorumForProposals,
-        uint minutesForDebate,
-        int marginOfVotesForMajority
-    ) onlyOwner {
-        minimumQuorum = minimumQuorumForProposals;
+    function changeVotingRules(token sharesAddress, uint minimumSharesToPassAVote, uint minutesForDebate) onlyOwner {
+        sharesTokenAddress = token(sharesAddress);
+        if (minimumSharesToPassAVote == 0 ) minimumSharesToPassAVote = 1;
+        minimumQuorum = minimumSharesToPassAVote;
         debatingPeriodInMinutes = minutesForDebate;
-        majorityMargin = marginOfVotesForMajority;
-
-        ChangeOfRules(minimumQuorum, debatingPeriodInMinutes, majorityMargin);
+        ChangeOfRules(minimumQuorum, debatingPeriodInMinutes, sharesTokenAddress);
     }
 
     /* Function to create a new proposal */
@@ -120,7 +100,7 @@ contract Congress is owned {
         string JobDescription,
         bytes transactionBytecode
     )
-        onlyMembers
+        onlyShareholders
         returns (uint proposalID)
     {
         proposalID = proposals.length++;
@@ -151,57 +131,60 @@ contract Congress is owned {
         return p.proposalHash == sha3(beneficiary, etherAmount, transactionBytecode);
     }
 
-    function vote(
-        uint proposalNumber,
-        bool supportsProposal,
-        string justificationText
-    )
-        onlyMembers
+    /* */
+    function vote(uint proposalNumber, bool supportsProposal)
+        onlyShareholders
         returns (uint voteID)
     {
-        Proposal p = proposals[proposalNumber];         // Get the proposal
-        if (p.voted[msg.sender] == true) throw;         // If has already voted, cancel
-        p.voted[msg.sender] = true;                     // Set this voter as having voted
-        p.numberOfVotes++;                              // Increase the number of votes
-        if (supportsProposal) {                         // If they support the proposal
-            p.currentResult++;                          // Increase score
-        } else {                                        // If they don't
-            p.currentResult--;                          // Decrease the score
-        }
-        // Create a log of this event
-        Voted(proposalNumber,  supportsProposal, msg.sender, justificationText);
+        Proposal p = proposals[proposalNumber];
+        if (p.voted[msg.sender] == true) throw;
+
+        voteID = p.votes.length++;
+        p.votes[voteID] = Vote({inSupport: supportsProposal, voter: msg.sender});
+        p.voted[msg.sender] = true;
+        p.numberOfVotes = voteID +1;
+        Voted(proposalNumber,  supportsProposal, msg.sender);
     }
 
     function executeProposal(uint proposalNumber, bytes transactionBytecode) returns (int result) {
         Proposal p = proposals[proposalNumber];
-        /* Check if the proposal can be executed:
-           - Has the voting deadline arrived?
-           - Has it been already executed or is it being executed?
-           - Does the transaction code match the proposal?
-           - Has a minimum quorum?
-        */
-
-        if (now < p.votingDeadline
-            || p.executed
-            || p.proposalHash != sha3(p.recipient, p.amount, transactionBytecode)
-            || p.numberOfVotes < minimumQuorum)
+        /* Check if the proposal can be executed */
+        if (now < p.votingDeadline  /* has the voting deadline arrived? */
+            ||  p.executed        /* has it been already executed? */
+            ||  p.proposalHash != sha3(p.recipient, p.amount, transactionBytecode)) /* Does the transaction code match the proposal? */
             throw;
 
-        /* execute result */
-        /* If difference between support and opposition is larger than margin */
-        if (p.currentResult > majorityMargin) {
-            // Avoid recursive calling
+        /* tally the votes */
+        uint quorum = 0;
+        uint yea = 0;
+        uint nay = 0;
 
+        for (uint i = 0; i <  p.votes.length; ++i) {
+            Vote v = p.votes[i];
+            uint voteWeight = sharesTokenAddress.balanceOf(v.voter);
+            quorum += voteWeight;
+            if (v.inSupport) {
+                yea += voteWeight;
+            } else {
+                nay += voteWeight;
+            }
+        }
+
+        /* execute result */
+        if (quorum <= minimumQuorum) {
+            /* Not enough significant voters */
+            throw;
+        } else if (yea > nay ) {
+            /* has quorum and was approved */
             p.executed = true;
             if (!p.recipient.call.value(p.amount * 1 ether)(transactionBytecode)) {
                 throw;
             }
-
             p.proposalPassed = true;
         } else {
             p.proposalPassed = false;
         }
         // Fire Events
-        ProposalTallied(proposalNumber, p.currentResult, p.numberOfVotes, p.proposalPassed);
+        ProposalTallied(proposalNumber, result, quorum, p.proposalPassed);
     }
 }
