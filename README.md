@@ -1,4 +1,4 @@
 # TeamEthereum
 Crowdfunded eSports Team
 
-Moved to www.aetherunited.com
+Moved to www.ardentunited.com
